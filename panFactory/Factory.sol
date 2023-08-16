@@ -302,8 +302,8 @@ contract Factory is Ownable, Pausable {
         }
 
         WCRO.withdraw(transAmount);
-        ptToken.burn(owner, transAmount);
-        ytToken.burn(owner, transAmount);
+        ptToken.burn(owner, amount);
+        ytToken.burn(owner, amount);
 
         payable(owner).transfer(transAmount);
         emit Burn(owner, transAmount);
@@ -337,8 +337,8 @@ contract Factory is Ownable, Pausable {
             PanToken.burn(burnAmount);
         }
 
-        ptToken.burn(owner, transAmount);
-        ytToken.burn(owner, transAmount);
+        ptToken.burn(owner, amount);
+        ytToken.burn(owner, amount);
 
         assert(WCRO.transfer(owner, transAmount));
         emit BurnToWCRO(owner, transAmount);
