@@ -232,7 +232,7 @@ contract Factory is Ownable, Pausable {
         depositedAmount += msg.value;
         _updateDelegationRatio();
 
-        uint256 toWCROAmount = 0;
+        uint256 toWCROAmount = msg.value;
 
         if (targetRatio>delegationRatio) {
             uint256 targetAmount = (targetRatio - delegationRatio) * (depositedAmount-withdrawnAmount) / 1e6;
