@@ -33,6 +33,8 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
     event ClaimToWCRO(address indexed user, uint256 amount);
 
     constructor(IWCRO _wcro, address _claimToSetter) {
+        require(_claimToSetter != address(0), "claimToSetter address cannot be zero");
+        
         WCRO = _wcro;
         claimToSetter = _claimToSetter;
     }
@@ -70,11 +72,15 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
 
     function setClaimTo(address _claimTo) external {
         require(msg.sender == claimToSetter, 'Creampan: FORBIDDEN');
+        require(_claimTo != address(0), "claimTo address cannot be zero");
+
         claimTo = _claimTo;
     }
 
     function setClaimToSetter(address _claimToSetter) external {
         require(msg.sender == claimToSetter, 'Creampan: FORBIDDEN');
+        require(_claimToSetter != address(0), "claimToSetter address cannot be zero");
+
         claimToSetter = _claimToSetter;
     }
 
@@ -136,6 +142,8 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
 
     function claim(address addr) external {
         require(msg.sender == claimTo, 'Creampan: FORBIDDEN');
+        require(addr != address(0), "addr address cannot be zero");
+
         UserInfo storage user = userInfo[addr];
         _updateInfo();
         _updateUserPendingRwards(addr);
@@ -155,6 +163,8 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
 
     function claimToWCRO(address addr) external {
         require(msg.sender == claimTo, 'Creampan: FORBIDDEN');
+        require(addr != address(0), "addr address cannot be zero");
+
         UserInfo storage user = userInfo[addr];
         _updateInfo();
         _updateUserPendingRwards(addr);
