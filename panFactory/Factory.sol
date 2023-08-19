@@ -66,6 +66,9 @@ contract Factory is Ownable, Pausable {
                 IWCRO _wcro,
                 uint256 _targetRatio,
                 address _feeToSetter           ) {
+        require(_feeToSetter != address(0), "feeToSetter address cannot be zero");
+        
+    
         delegationAddress  = _delegationAddress;
         PanToken           = _panToken;
         CROBridge          = _croBridge;
@@ -114,6 +117,8 @@ contract Factory is Ownable, Pausable {
     }
 
     function getCurrentFee() public view returns (uint256) {
+        require(targetRatio < 1e6, "TargetRatio should be less than 1e6");
+
         uint256 ReserveRatio = (1e6 - delegationRatio)*1e6 / (1e6 - targetRatio);
         uint256 utilizationRate;
         if (ReserveRatio<1e6) {
@@ -161,6 +166,8 @@ contract Factory is Ownable, Pausable {
     }
 
     function setEatPAN(bool _eatPANOn, uint256 _eatPANAmount) external onlyOwner {
+        require(_eatPANAmount < 1e24, "Amount should be less than 1e6 PAN");
+
         eatPANOn = _eatPANOn;
         eatPANAmount = _eatPANAmount;
         emit SetEatPAN(eatPANOn, eatPANAmount);
@@ -172,8 +179,10 @@ contract Factory is Ownable, Pausable {
     }
 
     function setFeeRate(uint256 _feeBase, uint256 _feeKink, uint256 _multiple, uint256 _jumpMultiple) external onlyOwner {
-        require(_feeBase <= 1e6, "Ratio should be less than 1e6");
-        require(_feeKink <= 1e6, "Ratio should be less than 1e6");
+        require(_feeBase      <= 1e6, "FeeBase should be less than 1e6");
+        require(_feeKink      <= 1e6, "FeeKink should be less than 1e6");
+        require(_multiple     <= 1e6, "Multiple should be less than 1e6");
+        require(_jumpMultiple <= 1e6, "jumpMultiple should be less than 1e6");
 
         feeBase = _feeBase;
         feeKink = _feeKink;
@@ -184,16 +193,21 @@ contract Factory is Ownable, Pausable {
 
     function setFeeTo(address _feeTo) external {
         require(msg.sender == feeToSetter, 'Creampan: FORBIDDEN');
+        require(_feeTo != address(0), "feeTo address cannot be zero");
+
         feeTo = _feeTo;
     }
 
     function setFeeToSetter(address _feeToSetter) external {
         require(msg.sender == feeToSetter, 'Creampan: FORBIDDEN');
+        require(_feeToSetter != address(0), "feeToSetter address cannot be zero");
+
         feeToSetter = _feeToSetter;
     }
 
     function claimFee() external onlyOwner whenNotPaused {
         require(feeTo != address(0), "Error: claim fee to the zero address");
+
         uint256 amount = feeAmount;
         withdrawnAmount += amount;
         feeAmount = 0;
@@ -219,6 +233,8 @@ contract Factory is Ownable, Pausable {
     }
 
     function _updateDelegationRatio() internal {
+        require(depositedAmount > 0               , "depositedAmount should be large than 0");    
+        require(depositedAmount >= withdrawnAmount, "depositedAmount should be large than or equal to withdrawnAmount");
 
         if ((depositedAmount-withdrawnAmount)>0) {
             delegationRatio = ((delegationAmount-undelegationAmount) * 1e6) / (depositedAmount-withdrawnAmount);
@@ -287,7 +303,7 @@ contract Factory is Ownable, Pausable {
         uint256 holdDiscount = getHoldDiscount(owner);
         uint256 feeRate = getCurrentFee();
         uint256 fee;
-        fee = ( amount * (feeRate*holdDiscount/100) ) / 1e6;
+        fee = ( amount*feeRate*holdDiscount/100 ) / 1e6;
         feeAmount += fee;
 
         uint256 transAmount = amount - fee;
@@ -323,7 +339,7 @@ contract Factory is Ownable, Pausable {
         uint256 holdDiscount = getHoldDiscount(owner);
         uint256 feeRate = getCurrentFee();
         uint256 fee;
-        fee = ( amount * (feeRate*holdDiscount/100) ) / 1e6;
+        fee = ( amount*feeRate*holdDiscount/100 ) / 1e6;
         feeAmount += fee;
 
         uint256 transAmount = amount - fee;
