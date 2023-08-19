@@ -5,11 +5,14 @@ pragma solidity 0.8.0;
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.4.0/contracts/utils/Address.sol";
 
 import './interfaces/IWCRO.sol';
 
-contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
-    
+contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
+    using Address for address payable;
+
     IWCRO public WCRO;
 
     struct UserInfo {
@@ -105,8 +108,9 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
         user.pendingRewards += accumulaitveRewards(balance, accTokenPerShare) - user.lastRewards;
     }
 
-    function claim() external {
+    function claim() external nonReentrant {
         UserInfo storage user = userInfo[msg.sender];
+        address payable recipient = payable(msg.sender);
         _updateInfo();
         _updateUserPendingRwards(msg.sender);
         uint256 balance = balanceOf(msg.sender);
@@ -119,7 +123,7 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
         }
         user.lastRewards = accumulaitveRewards(balance, accTokenPerShare);
         WCRO.withdraw(rewards);
-        payable(msg.sender).transfer(rewards);
+        recipient.sendValue(rewards);
         emit Claim(msg.sender, rewards);
     }
 
@@ -140,7 +144,7 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
         emit ClaimToWCRO(msg.sender, rewards);
     }
 
-    function claim(address addr) external {
+    function claim(address payable addr) external nonReentrant {
         require(msg.sender == claimTo, 'Creampan: FORBIDDEN');
         require(addr != address(0), "addr address cannot be zero");
 
@@ -157,7 +161,7 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable {
         }
         user.lastRewards = accumulaitveRewards(balance, accTokenPerShare);
         WCRO.withdraw(rewards);
-        payable(addr).transfer(rewards);
+        addr.sendValue(rewards);
         emit Claim(addr, rewards);
     }
 
