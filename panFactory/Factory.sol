@@ -10,8 +10,12 @@ import "./interfaces/IWCRO.sol";
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.4.0/contracts/utils/Address.sol";
 
-contract Factory is Ownable, Pausable {
+
+contract Factory is Ownable, Pausable, ReentrancyGuard {
+    using Address for address payable;
 
     IPanToken public PanToken;
     IWCRO public WCRO;
@@ -289,8 +293,8 @@ contract Factory is Ownable, Pausable {
         emit Mint(_to, amount);
     }
 
-    function burn(uint256 amount) public whenNotPaused {
-        address owner = msg.sender;
+    function burn(uint256 amount) public whenNotPaused nonReentrant {
+        address payable owner = payable(msg.sender);
         require(owner != address(0), "Error: burn from the zero address");
 
         uint256 panBalance = PanToken.balanceOf(owner);
@@ -321,7 +325,7 @@ contract Factory is Ownable, Pausable {
         ptToken.burn(owner, amount);
         ytToken.burn(owner, amount);
 
-        payable(owner).transfer(transAmount);
+        owner.sendValue(transAmount);
         emit Burn(owner, transAmount);
     }
 
