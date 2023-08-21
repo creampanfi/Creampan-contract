@@ -289,6 +289,7 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
     }
 
     function releaseSetter() external {
+        require(setter == address(0), "setter has been released");
         require(isSigner[msg.sender] == true, "only signer can release the setter");
         require(setConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
 
