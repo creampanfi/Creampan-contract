@@ -551,6 +551,7 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
     }
 
     function releaseSetter() external {
+        require(setter == address(0), "setter has been released");
         require(isSigner[msg.sender] == true, "only signer can release the setter");
         require(setConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
 
@@ -559,6 +560,7 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
     }
 
     function releaseUpdater() external {
+        require(updater == address(0), "updater has been released");
         require(isSigner[msg.sender] == true, "only signer can release the updater");
         require(updateConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
 
