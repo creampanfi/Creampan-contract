@@ -13,7 +13,6 @@ import "@openzeppelin/contracts/security/Pausable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v4.4.0/contracts/utils/Address.sol";
 
-
 contract Factory is Ownable, Pausable, ReentrancyGuard {
     using Address for address payable;
 
@@ -26,7 +25,6 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
     string public delegationAddress;
 
     address public feeTo;
-    address public feeToSetter;
 
     uint256 public delegationRatio;
     uint256 public targetRatio;
@@ -47,6 +45,33 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
 
     uint256 public holdLevelThreshold;
     
+// Multisig and timelock
+    address [] public signers;
+    mapping(address => bool) public isSigner;
+    mapping(uint256 => mapping(address => bool)) public isSetConfirmed;
+    mapping(uint256 => mapping(address => bool)) public isUpdateConfirmed;
+
+    uint256 public numConfirmationsRequired; // total confirmations needed
+    uint256 public setConfirmations;         // confirmations for current set
+    uint256 public updateConfirmations;      // confirmations for current update
+    //
+    uint256 public submitted;          // total submitted set
+    bool    public requestSet;         // submit set flag
+    uint256 public submitSetTimestamp; // submit set time
+    //
+    address public setter;             // assigned one-time setter
+    address public submittedSetter;    // submitted setter for confirmation
+    uint256 public setUnlockTime;      // Unlocktime for set after confirmation
+    //
+    uint256 public updated;               // total submitted update
+    bool    public requestUpdate;         // submit update flag
+    uint256 public submitUpdateTimestamp; // submit update time
+    //
+    address public updater;               // assigned one-time updater
+    address public submittedUpdater;      // submitted updater for confirmation
+    //
+//
+
     event Mint(address indexed user, uint256 amount);
     event MintFromWCRO(address indexed user, uint256 amount);
     event Burn(address indexed user, uint256 amount);
@@ -69,10 +94,11 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
                 IYT _ytToken,
                 IWCRO _wcro,
                 uint256 _targetRatio,
-                address _feeToSetter           ) {
-        require(_feeToSetter != address(0), "feeToSetter address cannot be zero");
-        
-    
+                address [] memory _signers,
+                uint256 _numConfirmationsRequired ) {
+        require(_signers.length           >= 5, "Number of signers has to be larger than or equal to five");
+        require(_numConfirmationsRequired >= 3, "Number of required confirmations has to be larger than or equal to three");
+
         delegationAddress  = _delegationAddress;
         PanToken           = _panToken;
         CROBridge          = _croBridge;
@@ -83,12 +109,24 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         eatPANOn           = false;
         eatPANAmount       = 100 * 1e18;
         holdLevelThreshold = 2500 * 1e18;
-        feeToSetter        = _feeToSetter;
         feeBase            = 5000;
         feeKink            = 650000;
         multiple           = 25000;
         jumpMultiple       = 500000;
 
+        //Multisig
+        numConfirmationsRequired = _numConfirmationsRequired;
+
+        for (uint256 i=0; i < _signers.length; i++) {
+            address signer = _signers[i];
+    
+            require(signer           != address(0), "signer cannot be zero");
+            require(isSigner[signer] == false     , "signer should be unique");
+
+            isSigner[signer] = true;
+            signers.push(signer);
+        }
+        //
     }
 
     function depositFunds() public payable {
@@ -142,71 +180,111 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         }
     }
 
-    function setToken(IPanToken _panToken, ICroBridge _croBridge, IPT _ptToken, IYT _ytToken, IWCRO _wcro) external onlyOwner {
+    function setToken(IPanToken _panToken, ICroBridge _croBridge, IPT _ptToken, IYT _ytToken, IWCRO _wcro) external {
         require(address(_panToken)  != address(0), "Invalid panToken Address");
         require(address(_croBridge) != address(0), "Invalid croBridge Address");
         require(address(_ptToken)   != address(0), "Invalid ptToken Address");
         require(address(_ytToken)   != address(0), "Invalid ytToken Address");
         require(address(_wcro)      != address(0), "Invalid WCRO Address");
 
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         PanToken = _panToken;
         CROBridge = _croBridge;
         ptToken = _ptToken;
         ytToken = _ytToken;
         WCRO = _wcro;
+
+        _cleanset();                                                     //Clean setter
+
         emit SetToken(address(CROBridge), address(ptToken), address(ytToken), address(WCRO));
     }
 
-    function setTargetRatio(uint256 _ratio) external onlyOwner {
+    function setTargetRatio(uint256 _ratio) external {
         require(_ratio >    0, "Ratio should be larger than 0");
         require(_ratio <  1e6, "Ratio should be less than 1e6");
+
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         targetRatio = _ratio;
+
+        _cleanset();                                                     //Clean setter
+
         emit SetTargetRatio(targetRatio);
     }
 
-    function setDelegateAddress(string memory _delegationAddress) external onlyOwner {
+    function setDelegateAddress(string memory _delegationAddress) external {
+        require(updater != address(0), "No updater is assigned");           //Multisig
+        require(msg.sender == updater, "Only updater can set parameters");  //Multisig
+
         delegationAddress = _delegationAddress;
+
+        _cleanupdate();                                                     //Clean updater
+
         emit SetDelegateAddress(delegationAddress);
     }
 
-    function setEatPAN(bool _eatPANOn, uint256 _eatPANAmount) external onlyOwner {
+    function setEatPAN(bool _eatPANOn, uint256 _eatPANAmount) external {
         require(_eatPANAmount < 1e24, "Amount should be less than 1e6 PAN");
+
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
 
         eatPANOn = _eatPANOn;
         eatPANAmount = _eatPANAmount;
+
+        _cleanset();                                                     //Clean setter
+
         emit SetEatPAN(eatPANOn, eatPANAmount);
     }
 
-    function setHoldLevelThreshold(uint256 _holdLevelThreshold) external onlyOwner {
+    function setHoldLevelThreshold(uint256 _holdLevelThreshold) external {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         holdLevelThreshold = _holdLevelThreshold;
+
+        _cleanset();                                                     //Clean setter
+
         emit SetHoldLevelThreshold(holdLevelThreshold);
     }
 
-    function setFeeRate(uint256 _feeBase, uint256 _feeKink, uint256 _multiple, uint256 _jumpMultiple) external onlyOwner {
+    function setFeeRate(uint256 _feeBase, uint256 _feeKink, uint256 _multiple, uint256 _jumpMultiple) external {
         require(_feeBase      <= 1e6, "FeeBase should be less than 1e6");
         require(_feeKink      <= 1e6, "FeeKink should be less than 1e6");
         require(_multiple     <= 1e6, "Multiple should be less than 1e6");
         require(_jumpMultiple <= 1e6, "jumpMultiple should be less than 1e6");
 
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         feeBase = _feeBase;
         feeKink = _feeKink;
         multiple = _multiple;
         jumpMultiple = _jumpMultiple;
+
+        _cleanset();                                                     //Clean setter
+
         emit SetFeeRate(feeBase, feeKink, multiple, jumpMultiple);
     }
 
     function setFeeTo(address _feeTo) external {
-        require(msg.sender == feeToSetter, 'Creampan: FORBIDDEN');
         require(_feeTo != address(0), "feeTo address cannot be zero");
 
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         feeTo = _feeTo;
-    }
 
-    function setFeeToSetter(address _feeToSetter) external {
-        require(msg.sender == feeToSetter, 'Creampan: FORBIDDEN');
-        require(_feeToSetter != address(0), "feeToSetter address cannot be zero");
-
-        feeToSetter = _feeToSetter;
+        _cleanset();                                                     //Clean setter        
     }
 
     function claimFee() external onlyOwner whenNotPaused {
@@ -219,11 +297,18 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         assert(WCRO.transfer(feeTo, amount));
     }
 
-    function updateDelegate(uint256 amount) external onlyOwner {
+    function updateDelegate(uint256 amount) external {
         require(amount                            <  (depositedAmount-withdrawnAmount), "Delegation should be less than totalDeposit");
         require((depositedAmount-withdrawnAmount) >= (delegationAmount+amount)        , "depositedAmount should be larger than delegationAmount");
+
+        require(updater != address(0), "No updater is assigned");           //Multisig
+        require(msg.sender == updater, "Only updater can set parameters");  //Multisig
+
         delegationAmount += amount;
         _updateDelegationRatio();
+
+        _cleanupdate();                                                     //Clean updater
+
         emit UpdateDelegate(delegationAmount);
     }
 
@@ -364,14 +449,122 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         emit BurnToWCRO(owner, transAmount);
     }
 
-    function pause() external onlyOwner whenNotPaused {
+    function pause() external whenNotPaused {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         _pause();
+
+        _cleanset();                                                     //Clean setter
+
         emit Pause();
     }
 
-    function unpause() external onlyOwner whenPaused {
+    function unpause() external whenPaused {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         _unpause();
+
+        _cleanset();                                                     //Clean setter
+
         emit Unpause();
     }
+
+// Multisig
+    function _cleanset() internal {
+        requestSet       = false;
+        setter           = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function _cleanupdate() internal {
+        requestUpdate       = false;
+        updater             = address(0);
+        updateConfirmations = 0;
+        updated += 1;
+    }
+
+    function dropSet() external {
+        require(requestSet == true, "no submission to drop");
+        require(block.timestamp > (submitSetTimestamp + 1 days), "submission is still in confirmation");
+        require(setConfirmations < numConfirmationsRequired, "The set is confirmed");
+        require(isSigner[msg.sender] == true, "only signer can drop set");
+
+        requestSet       = false;
+        submittedSetter  = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function dropUpdate() external {
+        require(requestUpdate == true, "no submission to drop");
+        require(block.timestamp > (submitUpdateTimestamp + 1 days), "submission is still in confirmation");
+        require(updateConfirmations < numConfirmationsRequired, "The update is confirmed");
+        require(isSigner[msg.sender] == true, "only signer can drop update");
+
+        requestUpdate       = false;
+        submittedUpdater    = address(0);
+        updateConfirmations = 0;
+        updated += 1;
+    }
+
+    function submitSet(address _setter) external {
+        require(_setter != address(0), "Error: zero address cannot be setter");
+        require(requestSet == false, "submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can submit set");
+
+        requestSet = true;
+        submitSetTimestamp = block.timestamp;
+        submittedSetter = _setter;
+    }
+
+    function submitUpdate(address _updater) external {
+        require(_updater != address(0), "Error: zero address cannot be updater");
+        require(requestUpdate == false, "submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can submit update");
+
+        requestUpdate = true;
+        submitUpdateTimestamp = block.timestamp;
+        submittedUpdater = _updater;
+    }
+
+    function confirmSet() external {
+        require(requestSet == true, "no submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can confirm the set");
+        require(isSetConfirmed[submitted][msg.sender] == false, "the signer has confirmed");
+
+        isSetConfirmed[submitted][msg.sender] = true;
+        setConfirmations += 1;
+    }
+
+    function confirmUpdate() external {
+        require(requestUpdate == true, "no submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can confirm the update");
+        require(isUpdateConfirmed[updated][msg.sender] == false, "the signer has confirmed");
+
+        isUpdateConfirmed[submitted][msg.sender] = true;
+        updateConfirmations += 1;
+    }
+
+    function releaseSetter() external {
+        require(isSigner[msg.sender] == true, "only signer can release the setter");
+        require(setConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
+
+        setter = submittedSetter;
+        setUnlockTime = block.timestamp + 2 days;  //Time lock
+    }
+
+    function releaseUpdater() external {
+        require(isSigner[msg.sender] == true, "only signer can release the updater");
+        require(updateConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
+
+        updater = submittedUpdater;
+    }
+//
+
 
 }
