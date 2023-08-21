@@ -21,7 +21,6 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
     }
 
     address public claimTo;
-    address public claimToSetter;
 
     uint256 public accTokenPerShare;
 
@@ -32,14 +31,46 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
 
     mapping(address => UserInfo) public userInfo;
 
+// Multisig and timelock
+    address [] public signers;
+    mapping(address => bool) public isSigner;
+    mapping(uint256 => mapping(address => bool)) public isSetConfirmed;
+
+    uint256 public numConfirmationsRequired; // total confirmations needed
+    uint256 public setConfirmations;         // confirmations for current set
+    //
+    uint256 public submitted;          // total submitted set
+    bool    public requestSet;         // submit set flag
+    uint256 public submitSetTimestamp; // submit set time
+    //
+    address public setter;             // assigned one-time setter
+    address public submittedSetter;    // submitted setter for confirmation
+    uint256 public setUnlockTime;      // Unlocktime for set after confirmation
+    //
+//
+
     event Claim(address indexed user, uint256 amount);
     event ClaimToWCRO(address indexed user, uint256 amount);
 
-    constructor(IWCRO _wcro, address _claimToSetter) {
-        require(_claimToSetter != address(0), "claimToSetter address cannot be zero");
-        
+    constructor(IWCRO _wcro, address [] memory _signers, uint256 _numConfirmationsRequired) {
+        require(_signers.length           >= 5, "Number of signers has to be larger than or equal to five");
+        require(_numConfirmationsRequired >= 3, "Number of required confirmations has to be larger than or equal to three");
+
         WCRO = _wcro;
-        claimToSetter = _claimToSetter;
+
+        //Multisig
+        numConfirmationsRequired = _numConfirmationsRequired;
+
+        for (uint256 i=0; i < _signers.length; i++) {
+            address signer = _signers[i];
+    
+            require(signer           != address(0), "signer cannot be zero");
+            require(isSigner[signer] == false     , "signer should be unique");
+
+            isSigner[signer] = true;
+            signers.push(signer);
+        }
+        //
     }
 
     function depositRewards() public payable {
@@ -74,17 +105,15 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
     }
 
     function setClaimTo(address _claimTo) external {
-        require(msg.sender == claimToSetter, 'Creampan: FORBIDDEN');
         require(_claimTo != address(0), "claimTo address cannot be zero");
 
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         claimTo = _claimTo;
-    }
 
-    function setClaimToSetter(address _claimToSetter) external {
-        require(msg.sender == claimToSetter, 'Creampan: FORBIDDEN');
-        require(_claimToSetter != address(0), "claimToSetter address cannot be zero");
-
-        claimToSetter = _claimToSetter;
+        _cleanset();                                                     //Clean setter
     }
 
     function _updateInfo() internal {
@@ -219,5 +248,53 @@ contract ytCRO is ERC20("YT CRO Token", "ytCRO"), Ownable, ReentrancyGuard {
             user_to.lastRewards = accumulaitveRewards(balance_to, accTokenPerShare);            
         }
     }
+
+// Multisig
+    function _cleanset() internal {
+        requestSet       = false;
+        setter           = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function dropSet() external {
+        require(requestSet == true, "no submission to drop");
+        require(block.timestamp > (submitSetTimestamp + 1 days), "submission is still in confirmation");
+        require(setConfirmations < numConfirmationsRequired, "The set is confirmed");
+        require(isSigner[msg.sender] == true, "only signer can drop set");
+
+        requestSet       = false;
+        submittedSetter  = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function submitSet(address _setter) external {
+        require(_setter != address(0), "Error: zero address cannot be setter");
+        require(requestSet == false, "submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can submit set");
+
+        requestSet = true;
+        submitSetTimestamp = block.timestamp;
+        submittedSetter = _setter;
+    }
+
+    function confirmSet() external {
+        require(requestSet == true, "no submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can confirm the set");
+        require(isSetConfirmed[submitted][msg.sender] == false, "the signer has confirmed");
+
+        isSetConfirmed[submitted][msg.sender] = true;
+        setConfirmations += 1;
+    }
+
+    function releaseSetter() external {
+        require(isSigner[msg.sender] == true, "only signer can release the setter");
+        require(setConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
+
+        setter = submittedSetter;
+        setUnlockTime = block.timestamp + 2 days;  //Time lock
+    }
+//
 
 }
