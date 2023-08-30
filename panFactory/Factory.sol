@@ -287,12 +287,18 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         _cleanset();                                                     //Clean setter        
     }
 
-    function claimFee() external onlyOwner whenNotPaused {
+    function claimFee() external whenNotPaused {
         require(feeTo != address(0), "Error: claim fee to the zero address");
+
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
 
         uint256 amount = feeAmount;
         withdrawnAmount += amount;
         feeAmount = 0;
+
+        _cleanset();                                                     //Clean setter
 
         assert(WCRO.transfer(feeTo, amount));
     }
