@@ -100,6 +100,26 @@ contract MasterBaker is Ownable {
     // Record current era
     uint256 public currentEra;
 
+
+// Multisig and timelock
+    address [] public signers;
+    mapping(address => bool) public isSigner;
+    mapping(uint256 => mapping(address => bool)) public isSetConfirmed;
+
+    uint256 public numConfirmationsRequired; // total confirmations needed
+    uint256 public setConfirmations;         // confirmations for current set
+    //
+    uint256 public submitted;          // total submitted set
+    bool    public requestSet;         // submit set flag
+    uint256 public submitSetTimestamp; // submit set time
+    //
+    address public setter;             // assigned one-time setter
+    address public submittedSetter;    // submitted setter for confirmation
+    uint256 public setUnlockTime;      // Unlocktime for set after confirmation
+    //
+//
+
+
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -114,8 +134,12 @@ contract MasterBaker is Ownable {
         address _devaddr,
         uint256 _panPerBlock,
         uint256 _startBlock,
-        uint256 _limitEra
+        address [] memory _signers,
+        uint256 _numConfirmationsRequired
     ) public {
+        require(_signers.length           >= 5, "Number of signers has to be larger than or equal to five");
+        require(_numConfirmationsRequired >= 3, "Number of required confirmations has to be larger than or equal to three");
+
         pan = _pan;
         bakery = _bakery;
         teamaddr = _teamaddr;
@@ -123,20 +147,40 @@ contract MasterBaker is Ownable {
         devaddr = _devaddr;
         panPerBlock = _panPerBlock;
         startBlock = _startBlock;
-        limitEra = _limitEra;
+        limitEra = 7;
         currentEra = 0;
 
         // staking pool
         poolInfo.push(PoolInfo({lpToken: _pan, allocPoint: 1000, lastRewardBlock: startBlock, accPanPerShare: 0}));
 
         totalAllocPoint = 1000;
+
+        //Multisig
+        numConfirmationsRequired = _numConfirmationsRequired;
+
+        for (uint256 i=0; i < _signers.length; i++) {
+            address signer = _signers[i];
+    
+            require(signer           != address(0), "signer cannot be zero");
+            require(isSigner[signer] == false     , "signer should be unique");
+
+            isSigner[signer] = true;
+            signers.push(signer);
+        }
+        //
     }
 
     receive() external payable {
     }
 
-    function updateMultiplier(uint256 multiplierNumber) public onlyOwner {
+    function updateMultiplier(uint256 multiplierNumber) public {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         BONUS_MULTIPLIER = multiplierNumber;
+
+        _cleanset();                                                     //Clean setter
     }
 
     function poolLength() external view returns (uint256) {
@@ -149,7 +193,11 @@ contract MasterBaker is Ownable {
         uint256 _allocPoint,
         IERC20 _lpToken,
         bool _withUpdate
-    ) public onlyOwner {
+    ) public {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -159,6 +207,8 @@ contract MasterBaker is Ownable {
             PoolInfo({lpToken: _lpToken, allocPoint: _allocPoint, lastRewardBlock: lastRewardBlock, accPanPerShare: 0})
         );
         updateStakingPool();
+
+        _cleanset();                                                     //Clean setter
     }
 
     // Update the given pool's PAN allocation point. Can only be called by the owner.
@@ -166,7 +216,11 @@ contract MasterBaker is Ownable {
         uint256 _pid,
         uint256 _allocPoint,
         bool _withUpdate
-    ) public onlyOwner {
+    ) public {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -176,6 +230,8 @@ contract MasterBaker is Ownable {
             totalAllocPoint = totalAllocPoint.sub(prevAllocPoint).add(_allocPoint);
             updateStakingPool();
         }
+
+        _cleanset();                                                     //Clean setter
     }
 
     function updateStakingPool() internal {
@@ -192,8 +248,14 @@ contract MasterBaker is Ownable {
     }
 
     // Set the migrator contract. Can only be called by the owner.
-    function setMigrator(IMigratorBaker _migrator) public onlyOwner {
+    function setMigrator(IMigratorBaker _migrator) public {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         migrator = _migrator;
+
+        _cleanset();                                                     //Clean setter
     }
 
     // Migrate lp token to another lp contract. Can be called by anyone. We trust that migrator contract is good.
@@ -371,12 +433,18 @@ contract MasterBaker is Ownable {
         devaddr = _devaddr;
     }
 
-    function updateStakingRatio(uint256 _ratio) public onlyOwner {
+    function updateStakingRatio(uint256 _ratio) public {
         require(_ratio <= 50, "updateStakingRatio: must be less than 50%");
+
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
 
         massUpdatePools();
         panStakingRatio = _ratio;
         updateStakingPool();
+
+        _cleanset();                                                     //Clean setter
 
         emit UpdatedPANStakingRatio(_ratio);
     }
@@ -385,7 +453,7 @@ contract MasterBaker is Ownable {
         uint256 panInit     = pan.initBlock();
         require(block.number > panInit, "block number must larger than PAN initial block");
         uint256 totalBlocks = block.number - panInit;
-        uint256 whatEra = totalBlocks.div(5).div(pan.blockPerDay());
+        uint256 whatEra = totalBlocks.div(365).div(pan.blockPerDay());
 
         if (whatEra > currentEra) {
             panPerBlock = (whatEra > limitEra) ? panPerBlock : panPerBlock.div(2);
@@ -395,13 +463,75 @@ contract MasterBaker is Ownable {
         emit UpdatedPANPerBlock(panPerBlock);
     }
 
-    function setLimitEra(uint256 _limitEra) public onlyOwner {
+    function setLimitEra(uint256 _limitEra) public {
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         limitEra = _limitEra;
+
+        _cleanset();                                                     //Clean setter
     }
 
-    function sendRewards() public onlyOwner {
+    function sendRewards() public {
         require(address(this).balance > 0, "No rewards to send");
+
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock
+
         teamaddr.transfer(address(this).balance);
+
+        _cleanset();                                                     //Clean setter        
     }
+
+// Multisig
+    function _cleanset() internal {
+        requestSet       = false;
+        setter           = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function dropSet() external {
+        require(requestSet == true, "no submission to drop");
+        require(block.timestamp > (submitSetTimestamp + 1 days), "submission is still in confirmation");
+        require(setConfirmations < numConfirmationsRequired, "The set is confirmed");
+        require(isSigner[msg.sender] == true, "only signer can drop set");
+
+        requestSet       = false;
+        submittedSetter  = address(0);
+        setConfirmations = 0;
+        submitted += 1;
+    }
+
+    function submitSet(address _setter) external {
+        require(_setter != address(0), "Error: zero address cannot be setter");
+        require(requestSet == false, "submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can submit set");
+
+        requestSet = true;
+        submitSetTimestamp = block.timestamp;
+        submittedSetter = _setter;
+    }
+
+    function confirmSet() external {
+        require(requestSet == true, "no submission to confirm");
+        require(isSigner[msg.sender] == true, "only signer can confirm the set");
+        require(isSetConfirmed[submitted][msg.sender] == false, "the signer has confirmed");
+
+        isSetConfirmed[submitted][msg.sender] = true;
+        setConfirmations += 1;
+    }
+
+    function releaseSetter() external {
+        require(setter == address(0), "setter has been released");
+        require(isSigner[msg.sender] == true, "only signer can release the setter");
+        require(setConfirmations >= numConfirmationsRequired, "Confirmations are not enough");
+
+        setter = submittedSetter;
+        setUnlockTime = block.timestamp + 10 minutes;  //Time lock
+    }
+//
 
 }
