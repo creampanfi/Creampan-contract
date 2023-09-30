@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.6.12;
 
-//import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-
 import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v3.4.0/contracts/token/ERC20/ERC20.sol";
 import "./PanToken.sol";
 
