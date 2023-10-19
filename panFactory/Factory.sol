@@ -552,7 +552,7 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
         require(isSigner[msg.sender] == true, "only signer can confirm the update");
         require(isUpdateConfirmed[updated][msg.sender] == false, "the signer has confirmed");
 
-        isUpdateConfirmed[submitted][msg.sender] = true;
+        isUpdateConfirmed[updated][msg.sender] = true;
         updateConfirmations += 1;
     }
 
