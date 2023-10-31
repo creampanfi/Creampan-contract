@@ -414,20 +414,35 @@ contract MasterBaker is Ownable {
 
     // Update team address by the previous team.
     function team(address payable _teamaddr) public {
-        require(msg.sender == teamaddr, "team: wut?");
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock        
+        
         teamaddr = _teamaddr;
+
+        _cleanset();                                                     //Clean setter
     }
 
     // Update maint address by the previous maint.
     function maint(address _maintaddr) public {
-        require(msg.sender == maintaddr, "maint: wut?");
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock        
+
         maintaddr = _maintaddr;
+
+        _cleanset();                                                     //Clean setter
     }
 
     // Update dev address by the previous dev.
     function dev(address _devaddr) public {
-        require(msg.sender == devaddr, "dev: wut?");
+        require(setter != address(0), "No setter is assigned");          //Multisig
+        require(msg.sender == setter, "Only setter can set parameters"); //Multisig
+        require(block.timestamp > setUnlockTime, "Not ready to set");    //Timelock        
+
         devaddr = _devaddr;
+
+        _cleanset();                                                     //Clean setter
     }
 
     function updateStakingRatio(uint256 _ratio) public {
