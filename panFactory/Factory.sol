@@ -135,7 +135,7 @@ contract Factory is Ownable, Pausable, ReentrancyGuard {
     }
 
     receive() external payable {
-        assert(msg.sender == address(WCRO)); // only accept CRO via fallback from the WCRO contract
+        require(msg.sender == address(WCRO)); // only accept CRO via fallback from the WCRO contract
     }
 
     function getDelegationRatio() public view returns (uint256) {
